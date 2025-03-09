@@ -19,13 +19,20 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    mo.md("""### let's take a lot at the architecture and how is it different from a normal MLP ? where are the waves ?""")
+    return
+
+
+@app.cell
 def _():
     import torch 
     import torch.nn.functional as F 
     import csv  
     import requests  
     import re
-    return F, csv, re, requests, torch
+    from typing import Optional 
+    return F, Optional, csv, re, requests, torch
 
 
 @app.cell
@@ -49,15 +56,15 @@ def _(csv, re, requests):
     for row in reader:  
         # Get the original name  
         original_name = row['name_latest']  
-    
+
         # Remove unwanted characters using regex  
         clean_name = re.sub(f'[{re.escape(chars_to_remove)}]', '', original_name)  
-    
+
         names.append(clean_name)  
 
     print(f"Total company names found {len(names)} !")  
     print(f"Longest name with {max(len(name) for name in names)} characters !")  
-    print(f"Some samples: {names[:5]}")  
+    print(f"Some samples: {names[:5]}")
     return (
         chars_to_remove,
         clean_name,
@@ -93,6 +100,20 @@ def _():
 
 @app.cell
 def _(names):
+    # scratchpad 
+    q = ''.join(names)
+    print(q)
+    # remove the repetitions 
+    w = list(set(q))
+    print(w)
+    # sort them so we can properly index 
+    s = sorted(w)
+    print (s)
+    return q, s, w
+
+
+@app.cell
+def _(names):
     # get all possible chars in the dataset (52 = 26 alphabets * 2)
     chars = sorted(list(set(''.join(names))))
     string_to_integer = {s:i+1 for i,s in enumerate(chars)} # s:i+1 since we'll reserve the 0th integer to be '.' dot or EOS (end of sequence token)
@@ -106,7 +127,7 @@ def _(names):
 
 @app.cell
 def _(mo):
-    context_slider = mo.ui.slider(start=1, stop=20, step=2)
+    context_slider = mo.ui.slider(start=2, stop=20, step=2)
     context_slider
     return (context_slider,)
 
@@ -118,40 +139,15 @@ def _(mo):
         ## Build the dataset
 
         Context length is the number of characters that your model will see when it tries to predict the next character.
-        We will use each name as a training example. So say the company name is "Google", we will create training examples in following manner, 
-
-         X(input) -> 🧠 -> Y(output)
-   
-        Training example 1
-
-        . . . -> G
-
-        Training example 2
-
-        . . G -> o
-
-        Training example 3
-
-        . G o -> o
-
-        Training example 4
-
-        G o o -> g
-
-        Training example 5
-
-
-        o o g -> l
-
-        Training example 6
-
-        o g l -> e
-
-        Training example 8
-
-        g l e -> .
+        We will use each name as a training example. So say the company name is "Google", we will create training examples in following manner,
         """
     )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.image(src="trainingexample.png")
     return
 
 
@@ -162,7 +158,7 @@ def _(context_slider, string_to_integer, torch):
         # there is always X -> Y mapping 
         X, Y = [], []
         for name in names:
-            # remeber that we reserved 0 as '.'
+            # remember that we reserved 0 as '.'
             context = [0] * context_length
             # each name must end with a '.' -> our model will learn this behaviour
             for character in name + '.':
@@ -203,6 +199,620 @@ def _(build_dataset, names):
         split_percentage_1,
         split_percentage_2,
     )
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### lets see how training data looks like 
+        each line represent a training example with inputs and outputs
+        """
+    )
+    return
+
+
+@app.cell
+def _(Xtrain, Ytrain, integer_to_string):
+    print("Mapping from X -> Y")
+    for x,y in zip(Xtrain[:10],Ytrain[:10]):
+        print(''.join((integer_to_string[index.item()] for index in x)), "--->", integer_to_string[y.item()])
+    return x, y
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        ### Let's discuss the architecture before we start coding up all the bits and pieces 
+
+        Initial inspiration: A Neural Probabilistic Language Model
+        WaveNet Inspiration: WaveNet: A Generative Model for Raw Audio
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Code up the Linear Layer
+        We will be taking some inspiration from how pytorch has developed their Linear layers
+        [Take a look at nn.Linear](https://pytorch.org/docs/stable/generated/torch.nn.Linear.html)
+        """
+    )
+    return
+
+
+@app.cell
+def _(torch):
+    class Linear:
+        '''Applies linear transformation to the input, y = xW + b
+            input_features: size of input sample 
+            output_featres: size of output sample 
+            bias: if set to False, we'll not add the bias 'b'. By default it is True
+        '''
+        def __init__(self, input_features: torch.Tensor, output_features: torch.Tensor, bias= True):
+            # perform xavier initialization
+            self.weight = torch.randn((input_features, output_features)) / input_features**0.5
+            self.bias = torch.zeros(output_features) if bias else None
+
+        def __call__(self, x:torch.Tensor):
+            '''x is your input to this Layer'''
+            self.output = x@self.weight
+            if self.bias is not None:
+                self.output += self.bias
+            return self.output
+
+        def parameters(self):
+            ''' utility method to return the total number of parameters in this layer'''
+            return [self.weight] + ([] if self.bias is None else [self.bias])
+    return (Linear,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### You might be wondering why did we divide the weight by $\sqrt(input features)$ ? 
+        _**Lets discuss Xavier initialization briefly:**_
+
+        It is a structured way for initializing the weights of a neural network to improve gradient flow during backprop and avoid vanishing or exploding gradient problems also it leads to faster convergence
+
+        Instead of initializing weights from a standard normal distribution $N(0,1)$, we use a normal distribution with a mean of 0 and a variance that is specifically calculated to maintain the variance of activations **across layers**. This ensures that the variance of the inputs to a layer is approximately equal to the variance of the outputs from that layer.
+
+        The formula for initializing the weights of a particular layer is: 
+        $$W \sim N(0, \text{var})$$  
+        where 
+        $$var = \frac{1}{n}$$
+        and n is the number of input neurons to that layer. 
+        We know that,
+        $$\sigma=\sqrt(variance)$$
+
+        So when we use **torch.randn** it give us a standard normal distribution with mean 0 and variance 1, which we then multiply by the corrected standard deviation from the xavier initialization. 
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Code up BatchNorm 
+        [Take a look at Pytorch impl](https://pytorch.org/docs/stable/generated/torch.nn.BatchNorm1d.html)
+
+        Before we code, lets take a look at the formulation that pytorch describes
+
+        $$y = \frac{x - \mathrm{E}[x]}{\sqrt{\mathrm{Var}[x] + \epsilon}} * \gamma + \beta$$
+
+        So we see that,
+
+        $$\frac{x - \mathrm{E}[x]}{\sqrt{\mathrm{Var}[x] + \epsilon}}$$
+
+        is the normalization term which centers the data around zero mean and scales it to have a unit variance.
+
+        $$\gamma, \beta$$
+
+        are learnable scaling and shifting params that allows the model to understand the optimal shift and scale for the normalized data.
+        """
+    )
+    return
+
+
+@app.cell
+def _(torch):
+    # scratch pad
+    A = torch.randn((3,4))
+    print(A.ndim)
+    B = torch.randn((3,4,5))
+    print(B.ndim)
+    C = torch.randn(3,4)
+    print(C)
+    #compute batch norm
+    cmean = C.mean(dim=0)
+    print(cmean,cmean.shape) # oops, look at the shape, what we expected was 1,4 but got 4
+    cmean_tryagain = C.mean(dim=0,keepdim=True)
+    print(cmean_tryagain,cmean_tryagain.shape) # now it looks nice
+    return A, B, C, cmean, cmean_tryagain
+
+
+@app.cell
+def _(Optional, torch):
+    class BatchNorm1d:
+        ''' compute the batch norm
+            num_features: number of features in input
+            momentum: to keep the running mean and average
+            eps: well avoid divide by zero errors
+            training: whether we are in training or evaluation mode ( this layer has different behavior in each )
+        '''
+        def __init__(self, num_features: int, momentum: Optional[float]=0.1, eps: float = 1e-5, training: bool = True):
+            self.eps = eps
+            self.momentum = momentum
+            self.is_training = training
+
+            self.gamma = torch.ones(num_features)
+            self.beta = torch.zeros(num_features)
+
+            self.running_mean = torch.zeros(num_features)
+            self.running_var = torch.ones(num_features)
+    
+        def __call__(self, x):
+            if self.is_training:
+                # Heads up ! We are designing our Batch Norm layer to work with tensor of dims 2 or 3 
+                # so for 2D case (N,C) we'll compute the norm across the N or '0' dim
+                # and for the 3D case (N,L,C) where N is the batch dim, L is the sequence of features, and C is the feature  dim. So we'll               norm across the batch size for all sequences of each and every feature '0,1'
+                if x.ndim==2:
+                    dim = 0
+                elif x.ndim==3:
+                    dim = (0,1)
+                # batch mean and variance
+                xmean = x.mean(dim,keepdim=True)
+                xvar = x.var(dim,keepdim=True)
+            else:
+                xmean = self.running_mean
+                xvar = self.running_var
+            # now we will apply the normalization formula that we discussed above
+            xhat = (x - xmean) / torch.sqrt(xvar+self.eps)
+            # gamma and beta are learnable and so it will allow model to move and play around with the distribution
+            self.output = xhat*self.gamma + self.beta
+
+            if self.is_training:
+                # update the running mean and variance AND we dont want to keep gradients for the following computations in our                          computational graph 
+                with torch.no_grad():
+                    self.running_mean = (1-self.momentum)*self.running_mean + (self.momentum)*xmean 
+                    self.running_var  = (1-self.momentum)*self.running_var  + (self.momentum)*xvar
+            return self.output
+
+        def parameters(self):
+            return [self.gamma, self.beta] 
+    return (BatchNorm1d,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Code up Tanh
+        This should be easy
+        [Take a look at Pytorch Tanh Impl](https://pytorch.org/docs/stable/generated/torch.nn.Tanh.html)
+
+        $$\text{Tanh}(x) = \frac{\exp(x) - \exp(-x)} {\exp(x) + \exp(-x)}$$
+        """
+    )
+    return
+
+
+@app.cell
+def _(torch):
+    class Tanh:
+        '''Shapes that this layer works with 
+        Input: any number of dimensions
+        Output: Same shape as Input'''
+        def __call__(self,x):
+            self.output = torch.tanh(x)
+            return self.output
+        def parameters(self):
+            # activation layer doesnot have any learnable parameters
+            return []
+    return (Tanh,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Code up the Embedding Layer
+        [Take a look at the pytorch impl of Embedding layer](https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html)
+        """
+    )
+    return
+
+
+@app.cell
+def _(torch):
+    # scratch pad 
+    nembed = 10 
+    embed_dim = 3
+    # learnable matrix that will map the input to embedding space 
+    mapping_matrix = torch.randn((nembed,embed_dim))
+    print(mapping_matrix, mapping_matrix.shape)
+    # our input indices 
+    input_indices = torch.tensor([1,2,3])
+    print(f"input indices: {input_indices, input_indices.shape}")
+    out_embed = mapping_matrix[0,1] # we dont want this 
+    print(f"output indices:\n{out_embed,out_embed.shape}") 
+    out_embed = mapping_matrix[[0,1]] # we want something like this 
+    print(f"output indices:\n{out_embed,out_embed.shape}")
+    out_embed = mapping_matrix[input_indices]
+    print(f"output indices:\n{out_embed,out_embed.shape}")
+    return embed_dim, input_indices, mapping_matrix, nembed, out_embed
+
+
+@app.cell
+def _(torch):
+    class Embedding:
+        '''A simple lookup table that stores embeddings of a fixed dictionary and size.
+            num_embeddings: size of the vocabulary 
+            embedding_dim : size of each embedding vector
+        '''
+        def __init__(self, num_embeddings:int, embedding_dim:int):
+            # this weight matrix is learnable
+            self.weight = torch.randn((num_embeddings,embedding_dim))
+        def __call__(self, indexes):
+            self.output = self.weight[indexes]
+            return self.output
+        def parameters(self):
+            return [self.weight]
+    return (Embedding,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Code up Flatten Layer
+        [Take a look at the torch impl of Flattening](https://pytorch.org/docs/stable/generated/torch.flatten.html)
+
+        Our implementation will be slighlty different. Firstly we expect the input to this layer to have the shape [N,L,C]
+        which mean first dim is batch size, second dim is the sequence length (time series) and finally we have the feature.
+
+        As we saw the wavenet architecture, we want to group together the sequences along the time dimension but then it would also mean that the resulting grouped tensor will have the features from the combined sequence. 
+
+        Say we want to make groups of 2 or combine two consecutive sequences into 1? 
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.image("groupconsecutive.png")
+    return
+
+
+@app.cell
+def _(torch):
+    # scratch pad
+    def _():
+        U = torch.randn((3,6,10))
+        time_step_stride = 2
+    
+        N,L,C = U.shape
+        print(f"U shape before grouping: {N},{L},{C}")
+        GroupedU = U.view(N,  L//time_step_stride,  C*time_step_stride)
+    
+        N,L,C = GroupedU.shape
+        print(f"U shape after grouping: {N},{L},{C}")
+    
+        # lets test some edge cases 
+        # suppose at the end we only have a sequence with length 1, it is unneccasary to have that dimension 
+        batch = torch.randn(10, 1, 5)
+        # how to remove ? let see 
+        print(batch.unsqueeze(0).shape) # unsqueeze added a new dim at 0th index and shifted all other dim to right 
+        print(batch.squeeze(1).shape) # okay this is what we need, we want to remove the 'Singleton dim'
+
+    _()
+    return
+
+
+@app.cell
+def _():
+    class GroupConsecutive:
+        """ this layer will help you group together sequences 
+        time_step_stride: represents the number of consecutive time steps you want to combine in each group.
+        """
+        def __init__(self, time_step_stride:int):
+            self.time_step_stride = time_step_stride
+        
+        def __call__(self,x):
+            # lets handle 2d inputs as well, this might happen in some layers where previous operation of group consec squeezed the L dim
+            if x.ndim == 2:  
+                N, C = x.shape  
+                # Treat as single time step 
+                L = 1   
+                x = x.view(N, L, C) 
+            
+            N,L,C = x.shape
+            print(f"grouped exec N,L,C {N,L,C}")
+            num_groups = L//self.time_step_stride
+        
+            if (num_groups==0):
+                self.output=x
+                return x
+            
+            x=x.view(N, num_groups, C*self.time_step_stride)
+            
+            self.output = x 
+            return self.output
+        
+        def parameters(self):
+            # doesnot have any learnable params 
+            return []
+    return (GroupConsecutive,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### let's code the Sequential Container 
+        All the layers are added sequentially into this container ⛓️ and are connected in a cascading way.
+        [Take a look at how pytorch implements it](https://pytorch.org/docs/stable/generated/torch.nn.Sequential.html)
+        """
+    )
+    return
+
+
+@app.cell
+def _():
+    # scratch pad 
+    def _():
+        # lets also discuss the diff btw generator exp and list exp 
+        list_res = [x for x in range(5)]
+        print(list_res)
+        print(list_res[2])
+        print(len(list_res))
+        print('--LIST exp---')
+        # we can iterator a list expr however many times 
+        for x in list_res:
+            print(x)
+        print('-----')
+        for x in list_res:
+            print(x)
+        print('--GEN exp---')
+        # generator exp
+        gen_res = (x for x in range(5))
+        print(gen_res) # return a gen obj
+        # gen can be iterated only once
+        # this gives error print(gen_res[0])
+        for x in gen_res:
+            print(x)
+        print('--Will be empty now since gen is used up now---')
+        for x in gen_res:
+            print(x)
+        print('-----')
+        # conclusion: generator expression are useful for large datasets because they generate values on the fly instead of storing them all at once like a list
+        class layer:
+            def parameters(self):
+                return [1] # cant simply return 1, cuz list comprehension expects an iterable like a list or generator that can be iterated over 
+        x = layer()
+        y = layer() 
+        layers=[]
+        layers.append(x)
+        layers.append(y)
+        print([layer.parameters()[0] for layer in layers])
+        # print([p for layer in layers for p in layer.parameters()])
+    
+    _()
+    return
+
+
+@app.cell
+def _():
+    class Sequential:
+        '''a container to hold the layers and call the forward method on each 
+        '''
+        def __init__(self, layers):
+            self.layers = layers
+        
+        def __call__(self, x):
+            for layer in self.layers:
+                x = layer(x)
+                print(x.shape)
+            self.output = x 
+            return self.output
+        
+        def parameters(self):
+            return [p for layer in self.layers for p in layer.parameters()]
+    return (Sequential,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Let's code up the Network
+        1. Decide the embedding dimensionality of the character embedding vectors
+        2. Decide the number of neurons in the hidden layer of the MLP
+        3. Define the model, choose the order and number of each layer
+        4. Begin Training
+        5. Perform Train/Validation Loss analysis
+        6. Sample from Model
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    embedding_dimension = mo.ui.slider(start=2, stop=50, step=2)
+    embedding_dimension
+    return (embedding_dimension,)
+
+
+@app.cell
+def _(mo):
+    hidden_layer_size = mo.ui.slider(start=100, stop=200, step=2)
+    hidden_layer_size
+    return (hidden_layer_size,)
+
+
+@app.cell
+def _(
+    BatchNorm1d,
+    Embedding,
+    GroupConsecutive,
+    Linear,
+    Sequential,
+    Tanh,
+    embedding_dimension,
+    hidden_layer_size,
+    torch,
+    vocabulary_size,
+):
+    model = Sequential([
+            Embedding(vocabulary_size,embedding_dimension.value),
+        
+            GroupConsecutive(2), 
+            Linear(embedding_dimension.value*2,hidden_layer_size.value,bias=False),
+            BatchNorm1d(hidden_layer_size.value),
+            Tanh(),
+    
+            GroupConsecutive(2),
+            Linear(hidden_layer_size.value  *2,hidden_layer_size.value,bias=False),
+            BatchNorm1d(hidden_layer_size.value), 
+            Tanh(),
+    
+            GroupConsecutive(2),
+            Linear(hidden_layer_size.value  *2,hidden_layer_size.value,bias=False),
+            BatchNorm1d(hidden_layer_size.value), 
+            Tanh(),
+    
+            Linear(hidden_layer_size.value,vocabulary_size),
+        ])
+
+    with torch.no_grad():
+        model.layers[-1].weight *= 0.1
+    return (model,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        ##### you might wonder why did we multiply the weight of the last layer with 0.1 ? 
+
+        At the beginning of training we dont want any particular character to have a high precedence over other characters so all the logits should have roughly same value hence roughly a uniform distribution at the output layer 
+        """
+    )
+    return
+
+
+@app.cell
+def _(model):
+    # Count the total parameters of the model 
+    parameters = model.parameters()
+    params = [p.nelement() for p in parameters]
+    print(f"MODEL PARAMS: {sum(params)}")
+    # prepare for training 
+    for p in parameters:
+        p.requires_grad = True
+    return p, parameters, params
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""#### Lets define some training parameters that are tuneable """)
+    return
+
+
+@app.cell
+def _(mo):
+    max_iterations = mo.ui.slider(start=1000, stop=200000, step=1)
+    max_iterations
+    return (max_iterations,)
+
+
+@app.cell
+def _(mo):
+    batch_size = mo.ui.slider(start=8, stop=64, step=8)
+    batch_size
+    return (batch_size,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""#### Training Loop """)
+    return
+
+
+@app.cell
+def _(torch):
+    # scratch pad 
+    # (1) is just an integer in paranthesis 
+    # (1,) is a tuple containing single element
+    def _():
+        a = torch.randint(0,200,(32,))
+        # choose a random batch from our data set
+        print(a)
+        # remember our X train was torch.Size([205907, 3]) if context is 3, lets select batch size as 32
+        index = torch.randint(0, 205907, (32,))
+        print(index)
+        # lets see a dummy example 
+        x = torch.randn(5,3) # xtrain
+        print(x) 
+        index = torch.randint(0,5,(2,)) # randomly choosen batch of 2 examples 
+        print(index)
+        print(x[index])
+    
+    _()
+    return
+
+
+@app.cell
+def _(F, Xtrain, Ytrain, batch_size, max_iterations, model, torch):
+    for i in range(max_iterations.value):
+        index = torch.randint(0, Xtrain.shape[0],(batch_size.value,))
+        Xbatch,Ybatch = Xtrain[index], Ytrain[index]
+
+        # forward pass 
+        logits = model(Xbatch)
+        loss = F.cross_entropy(logits, Ybatch)
+
+        # backward pass: keep in mind that when performing backprop clear up all the previously computed gradients 
+        # You should not accumulate gradients 
+        for param in model.parameters:
+            param.grad = None
+        loss.backward()
+
+    return Xbatch, Ybatch, i, index, logits, loss, param
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell
