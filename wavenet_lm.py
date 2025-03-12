@@ -31,7 +31,7 @@ def _():
     import csv  
     import requests  
     import re
-    from typing import Optional 
+    from typing import Optional
     return F, Optional, csv, re, requests, torch
 
 
@@ -290,7 +290,7 @@ def _(mo):
         We know that,
         $$\sigma=\sqrt(variance)$$
 
-        So when we use **torch.randn** it give us a standard normal distribution with mean 0 and variance 1, which we then multiply by the corrected standard deviation from the xavier initialization. 
+        So when we use **torch.randn** it give us a standard normal distribution with mean 0 and variance 1, which we then multiply by the corrected standard deviation from the xavier initialization.
         """
     )
     return
@@ -357,7 +357,7 @@ def _(Optional, torch):
 
             self.running_mean = torch.zeros(num_features)
             self.running_var = torch.ones(num_features)
-    
+
         def __call__(self, x):
             if self.is_training:
                 # Heads up ! We are designing our Batch Norm layer to work with tensor of dims 2 or 3 
@@ -386,7 +386,7 @@ def _(Optional, torch):
             return self.output
 
         def parameters(self):
-            return [self.gamma, self.beta] 
+            return [self.gamma, self.beta]
     return (BatchNorm1d,)
 
 
@@ -480,7 +480,7 @@ def _(mo):
 
         As we saw the wavenet architecture, we want to group together the sequences along the time dimension but then it would also mean that the resulting grouped tensor will have the features from the combined sequence. 
 
-        Say we want to make groups of 2 or combine two consecutive sequences into 1? 
+        Say we want to make groups of 2 or combine two consecutive sequences into 1?
         """
     )
     return
@@ -498,14 +498,14 @@ def _(torch):
     def _():
         U = torch.randn((3,6,10))
         time_step_stride = 2
-    
+
         N,L,C = U.shape
         print(f"U shape before grouping: {N},{L},{C}")
         GroupedU = U.view(N,  L//time_step_stride,  C*time_step_stride)
-    
+
         N,L,C = GroupedU.shape
         print(f"U shape after grouping: {N},{L},{C}")
-    
+
         # lets test some edge cases 
         # suppose at the end we only have a sequence with length 1, it is unneccasary to have that dimension 
         batch = torch.randn(10, 1, 5)
@@ -513,40 +513,51 @@ def _(torch):
         print(batch.unsqueeze(0).shape) # unsqueeze added a new dim at 0th index and shifted all other dim to right 
         print(batch.squeeze(1).shape) # okay this is what we need, we want to remove the 'Singleton dim'
 
+        # Let's see how padding would work if L is not dividible by time step stride 
+        # N,L,C = 8,5,20 
+        # so 5 is not divisible by 2 directly and we need to perform padding such that is divisible 
+        x = torch.randn((8,5,20))
+        N,L,C = x.shape
+        print(f" x shape is: {x.shape}")
+        # the two lines below will give error because the L is not evenly divisble by 2 so we need to pad 
+        # y = x.view(N,L//2,C*2)
+        # print(f" y shape is: {y.shape}")
+        # assuming time step stride is 2
+        padding = L % 2 
+        print(f" padding: {padding}")
+
+
     _()
     return
 
 
 @app.cell
-def _():
+def _(F):
     class GroupConsecutive:
         """ this layer will help you group together sequences 
         time_step_stride: represents the number of consecutive time steps you want to combine in each group.
         """
         def __init__(self, time_step_stride:int):
             self.time_step_stride = time_step_stride
-        
+
         def __call__(self,x):
             # lets handle 2d inputs as well, this might happen in some layers where previous operation of group consec squeezed the L dim
-            if x.ndim == 2:  
-                N, C = x.shape  
-                # Treat as single time step 
-                L = 1   
-                x = x.view(N, L, C) 
-            
             N,L,C = x.shape
-            print(f"grouped exec N,L,C {N,L,C}")
-            num_groups = L//self.time_step_stride
-        
-            if (num_groups==0):
-                self.output=x
-                return x
-            
+
+            # padding, assumption here is that timestepstride is always 2
+            if L%self.time_step_stride !=0:
+                x = F.pad(x, (0,0,0,1), "constant", 0)
+
+            num_groups = x.shape[1]//self.time_step_stride
             x=x.view(N, num_groups, C*self.time_step_stride)
-            
+
+            # squeeze is not needed since we are correctly choosing the last time step when computing the logits
+            # if (x.shape[1] == 1):
+            #     x = x.squeeze(1)
+
             self.output = x 
             return self.output
-        
+
         def parameters(self):
             # doesnot have any learnable params 
             return []
@@ -604,7 +615,7 @@ def _():
         layers.append(y)
         print([layer.parameters()[0] for layer in layers])
         # print([p for layer in layers for p in layer.parameters()])
-    
+
     _()
     return
 
@@ -616,14 +627,14 @@ def _():
         '''
         def __init__(self, layers):
             self.layers = layers
-        
+
         def __call__(self, x):
             for layer in self.layers:
                 x = layer(x)
-                print(x.shape)
+                #print(f"{layer.__class__.__name__}: {x.shape}") # for debugging 
             self.output = x 
             return self.output
-        
+
         def parameters(self):
             return [p for layer in self.layers for p in layer.parameters()]
     return (Sequential,)
@@ -647,7 +658,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    embedding_dimension = mo.ui.slider(start=2, stop=50, step=2)
+    embedding_dimension = mo.ui.slider(start=10, stop=50, step=2)
     embedding_dimension
     return (embedding_dimension,)
 
@@ -674,22 +685,22 @@ def _(
 ):
     model = Sequential([
             Embedding(vocabulary_size,embedding_dimension.value),
-        
+
             GroupConsecutive(2), 
             Linear(embedding_dimension.value*2,hidden_layer_size.value,bias=False),
             BatchNorm1d(hidden_layer_size.value),
             Tanh(),
-    
+
             GroupConsecutive(2),
             Linear(hidden_layer_size.value  *2,hidden_layer_size.value,bias=False),
             BatchNorm1d(hidden_layer_size.value), 
             Tanh(),
-    
+
             GroupConsecutive(2),
             Linear(hidden_layer_size.value  *2,hidden_layer_size.value,bias=False),
             BatchNorm1d(hidden_layer_size.value), 
             Tanh(),
-    
+
             Linear(hidden_layer_size.value,vocabulary_size),
         ])
 
@@ -704,7 +715,7 @@ def _(mo):
         r"""
         ##### you might wonder why did we multiply the weight of the last layer with 0.1 ? 
 
-        At the beginning of training we dont want any particular character to have a high precedence over other characters so all the logits should have roughly same value hence roughly a uniform distribution at the output layer 
+        At the beginning of training we dont want any particular character to have a high precedence over other characters so all the logits should have roughly same value hence roughly a uniform distribution at the output layer
         """
     )
     return
@@ -724,13 +735,13 @@ def _(model):
 
 @app.cell
 def _(mo):
-    mo.md(r"""#### Lets define some training parameters that are tuneable """)
+    mo.md(r"""#### Lets define some training parameters that are tuneable""")
     return
 
 
 @app.cell
 def _(mo):
-    max_iterations = mo.ui.slider(start=1000, stop=200000, step=1)
+    max_iterations = mo.ui.slider(start=10000, stop=200000, step=1)
     max_iterations
     return (max_iterations,)
 
@@ -744,7 +755,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""#### Training Loop """)
+    mo.md(r"""#### Training Loop""")
     return
 
 
@@ -766,53 +777,148 @@ def _(torch):
         index = torch.randint(0,5,(2,)) # randomly choosen batch of 2 examples 
         print(index)
         print(x[index])
-    
+        x = torch.randn((8,2,53))
+        print(x.shape)
+        b = x[:,-1,:] # use only the last time step
+        print(b.shape)
     _()
     return
 
 
 @app.cell
-def _(F, Xtrain, Ytrain, batch_size, max_iterations, model, torch):
+def _(F, Xtrain, Ytrain, batch_size, max_iterations, model, parameters, torch):
+    iteration_loss = []
     for i in range(max_iterations.value):
         index = torch.randint(0, Xtrain.shape[0],(batch_size.value,))
         Xbatch,Ybatch = Xtrain[index], Ytrain[index]
 
         # forward pass 
         logits = model(Xbatch)
+        logits = logits[:, -1, :]
         loss = F.cross_entropy(logits, Ybatch)
 
         # backward pass: keep in mind that when performing backprop clear up all the previously computed gradients 
         # You should not accumulate gradients 
-        for param in model.parameters:
+        for param in parameters:
             param.grad = None
         loss.backward()
 
-    return Xbatch, Ybatch, i, index, logits, loss, param
+        lr = 0.1 if i < 50000 else 0.01
+        for param in parameters:
+            param.data += -lr* param.grad
+
+        if i%1000 == 0:
+            print(f'{i:7d}/{max_iterations.value:7d}: {loss.item():.4f}')
+        iteration_loss.append(loss.log10().item())
+    return Xbatch, Ybatch, i, index, iteration_loss, logits, loss, lr, param
 
 
 @app.cell
-def _():
+def _(iteration_loss, torch):
+    # scratch pad 
+    import matplotlib.pyplot as plt
+    def _():
+        plt.figure(figsize=(10, 5))  
+        plt.plot(torch.tensor(iteration_loss).view(-1,5000).mean(1))  
+    
+        plt.title('Training Loss over Iterations')   
+        return plt.gcf()
+    _()
+    return (plt,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        #### Evaluate 
+        In evaluation stage, we must first set the training equals to 'False' for our layers especially for the Batch Norm layer since that has different behavior in evaluation and training
+        """
+    )
     return
 
 
 @app.cell
 def _():
+    # scratch pad 
+    def _():
+        split = ['train']
+        dict = {'train':{'a','b'}}
+        print(dict)
+        x,y = dict['train']
+        print(x,y)
+    _()
     return
 
 
 @app.cell
-def _():
+def _(F, Xtest, Xtrain, Xval, Ytest, Ytrain, Yval, model, torch):
+    for layer in model.layers:
+        layer.is_training = False
+
+    @torch.no_grad()
+    def evaluation(split):
+        x,y = {
+            'train':{Xtrain,Ytrain},
+            'val':{Xval,Yval},
+            'test':{Xtest,Ytest}
+        }[split]
+        logits = model(x)
+        logits = logits[:,-1,:]
+        loss = F.cross_entropy(logits,y)
+        print(split, loss.item())
+
+    evaluation('train')
+    evaluation('val')
+    evaluation('test')
+    return evaluation, layer
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""#### Sample from the model""")
     return
 
 
 @app.cell
-def _():
+def _(torch):
+    #scratch pad 
+    def _():
+        torch.set_printoptions(  
+        precision=4,       
+        sci_mode=False,    
+        linewidth=120,     
+        edgeitems=3)
+        random = torch.abs(torch.randn((1,5)))
+        print(random, random.shape)
+        sum_across_cols = torch.sum(random,dim=1,keepdim=True)
+        print(sum_across_cols, sum_across_cols.shape)
+        prob = random/sum_across_cols
+        print(prob,prob.shape)
+        sample_index_based_on_prob = torch.multinomial(prob, num_samples=1).item()
+        print(sample_index_based_on_prob)
+    _()
+
     return
 
 
 @app.cell
-def _():
-    return
+def _(F, context_slider, integer_to_string, model, torch):
+    for _ in range(20):
+        out = []
+        context = [0] * context_slider.value
+        while True:
+            lgits = model(torch.tensor([context]))
+            lgits = lgits[:,-1,:]
+            probabilities = F.softmax(lgits, dim=1)
+            ix = torch.multinomial(probabilities, num_samples=1).item()
+            context = context[1:] + [ix]
+            out.append(ix)
+            if ix==0:
+                break
+        print(''.join(integer_to_string[i] for i in out))
+        
+    return context, ix, lgits, out, probabilities
 
 
 @app.cell
